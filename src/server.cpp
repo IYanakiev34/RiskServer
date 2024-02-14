@@ -4,7 +4,6 @@
 #include <netdb.h>
 #include <unistd.h>
 
-#include "include/orders.h"
 #include <util/util.h>
 
 Server::Server(std::string &&host, std::string &&port)
@@ -49,7 +48,7 @@ void Server::run() {
       exit(1);
     }
 
-    std::cout << "Poll num: " << poll_num << std::endl;
+    std::cout << "Request Nums: " << poll_num << std::endl;
     m_currDelIdx = 0;
 
     for (auto it = m_fds.begin(); it != m_fds.end(); ++it) {
@@ -74,7 +73,7 @@ template <typename It> void Server::handle_client_request(It it) {
   int client_fd = (*it).fd;
   ssize_t nbytes =
       recv(client_fd, m_requestBuffer.data(), m_requestBuffer.size(), 0);
-  std::cout << "Server got: " << nbytes << " bytes\n";
+  std::cout << "Server got: " << nbytes << " bytes\n\n";
 
   if (nbytes <= 0) {
     if (nbytes == 0) {
@@ -89,21 +88,65 @@ template <typename It> void Server::handle_client_request(It it) {
     return;
   }
 
+  // Create a message from the bytes received
   switch (nbytes) {
-  case 51:
+  case NEWO_MSG_SIZE: {
     Message<NewOrder> msg;
     std::memset(&msg, 0, sizeof(Message<NewOrder>));
     std::memcpy(&msg, m_requestBuffer.data(), nbytes);
-    deserialize(msg.header);
-    deserialize(msg.data);
+    deserialize(msg);
     std::cout << msg.header << std::endl;
     std::cout << msg.data << std::endl;
     break;
+  }
+  case DELO_MSG_SIZE: {
+    Message<DeleteOrder> msg;
+    std::memset(&msg, 0, sizeof(Message<DeleteOrder>));
+    std::memcpy(&msg, m_requestBuffer.data(), nbytes);
+    deserialize(msg);
+    std::cout << msg.header << std::endl;
+    std::cout << msg.data << std::endl;
+    break;
+  }
+  case MODO_MSG_SIZE: {
+    Message<ModifyOrderQuantity> msg;
+    std::memset(&msg, 0, sizeof(Message<ModifyOrderQuantity>));
+    std::memcpy(&msg, m_requestBuffer.data(), nbytes);
+    deserialize(msg);
+    std::cout << msg.header << std::endl;
+    std::cout << msg.data << std::endl;
+    break;
+  }
+  case TRO_MSG_SIZE: {
+    Message<Trade> msg;
+    std::memset(&msg, 0, sizeof(Message<Trade>));
+    std::memcpy(&msg, m_requestBuffer.data(), nbytes);
+    deserialize(msg);
+    std::cout << msg.header << std::endl;
+    std::cout << msg.data << std::endl;
+    break;
+  }
   default:
     std::cerr << "Cannot handle this message!\n";
     exit(1);
   };
-  // TODO: send response to client
+
+  Message<OrderResponse> rsp{.header{.version = 1,
+                                     .payloadSize = sizeof(OrderResponse),
+                                     .sequenceNumber = 2,
+                                     .timestamp = 10},
+                             .data{.messageType = OrderResponse::MESSAGE_TYPE,
+                                   .orderId = 10,
+                                   .status = OrderResponse::Status::ACCEPTED}};
+
+  serialize(rsp);
+  size_t toSend = ORDR_MSG_SIZE;
+  std::memcpy(m_requestBuffer.data(), &rsp, toSend);
+
+  int actuallySent = send(client_fd, &rsp, toSend, 0);
+  if (actuallySent == -1) {
+    std::cerr << "Some err\n";
+  }
 }
 
 void Server::handle_new_connection() {

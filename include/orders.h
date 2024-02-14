@@ -98,31 +98,6 @@ struct OrderResponse {
 static_assert(sizeof(OrderResponse) == 12,
               "The OrderResponse size is not correct!");
 
-// Serialization of orders
-template <typename T> void serialize(T &);
-template <> void serialize<Header>(Header &type);
-template <> void serialize<NewOrder>(NewOrder &order);
-template <> void serialize<DeleteOrder>(DeleteOrder &order);
-template <> void serialize<ModifyOrderQuantity>(ModifyOrderQuantity &order);
-template <> void serialize<Trade>(Trade &trade);
-template <> void serialize<OrderResponse>(OrderResponse &response);
-
-// Deserialization of orders
-template <typename T> void deserialize(T &);
-template <> void deserialize<Header>(Header &type);
-template <> void deserialize<NewOrder>(NewOrder &order);
-template <> void deserialize<DeleteOrder>(DeleteOrder &order);
-template <> void deserialize<ModifyOrderQuantity>(ModifyOrderQuantity &order);
-template <> void deserialize<Trade>(Trade &trade);
-template <> void deserialize<OrderResponse>(OrderResponse &response);
-
-std::ostream &operator<<(std::ostream &out, Header const &h);
-std::ostream &operator<<(std::ostream &out, NewOrder const &h);
-std::ostream &operator<<(std::ostream &out, DeleteOrder const &h);
-std::ostream &operator<<(std::ostream &out, ModifyOrderQuantity const &h);
-std::ostream &operator<<(std::ostream &out, Trade const &h);
-std::ostream &operator<<(std::ostream &out, OrderResponse const &h);
-
 template <typename T>
 using remove_cv_ref_ptr = typename std::remove_cv<typename std::remove_pointer<
     typename std::remove_reference<T>::type>::type>::type;
@@ -146,5 +121,41 @@ template <Sendable T> struct Message {
   Header header;
   T data;
 } __attribute__((__packed__));
+
+// Serialization of orders
+template <Sendable T> void serialize(T &);
+template <> void serialize<Header>(Header &type);
+template <> void serialize<NewOrder>(NewOrder &order);
+template <> void serialize<DeleteOrder>(DeleteOrder &order);
+template <> void serialize<ModifyOrderQuantity>(ModifyOrderQuantity &order);
+template <> void serialize<Trade>(Trade &trade);
+template <> void serialize<OrderResponse>(OrderResponse &response);
+template <Sendable T> void serialize(Message<T> &);
+
+// Deserialization of orders
+template <Sendable T> void deserialize(T &);
+template <> void deserialize<Header>(Header &type);
+template <> void deserialize<NewOrder>(NewOrder &order);
+template <> void deserialize<DeleteOrder>(DeleteOrder &order);
+template <> void deserialize<ModifyOrderQuantity>(ModifyOrderQuantity &order);
+template <> void deserialize<Trade>(Trade &trade);
+template <> void deserialize<OrderResponse>(OrderResponse &response);
+template <Sendable T> void deserialize(Message<T> &);
+
+std::ostream &operator<<(std::ostream &out, Header const &h);
+std::ostream &operator<<(std::ostream &out, NewOrder const &h);
+std::ostream &operator<<(std::ostream &out, DeleteOrder const &h);
+std::ostream &operator<<(std::ostream &out, ModifyOrderQuantity const &h);
+std::ostream &operator<<(std::ostream &out, Trade const &h);
+std::ostream &operator<<(std::ostream &out, OrderResponse const &h);
+
+static constexpr size_t NEWO_MSG_SIZE = sizeof(Header) + sizeof(NewOrder);
+static constexpr size_t DELO_MSG_SIZE = sizeof(Header) + sizeof(DeleteOrder);
+static constexpr size_t MODO_MSG_SIZE =
+    sizeof(Header) + sizeof(ModifyOrderQuantity);
+static constexpr size_t TRO_MSG_SIZE = sizeof(Header) + sizeof(Trade);
+static constexpr size_t ORDR_MSG_SIZE = sizeof(Header) + sizeof(OrderResponse);
+
+#include "orders.inl"
 
 #endif

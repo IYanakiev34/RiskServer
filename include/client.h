@@ -33,7 +33,6 @@ public:
   // cannot copy construct or assign a client due to socket ownership
   TCPClient(TCPClient const &) = delete;
   TCPClient &operator=(TCPClient const &) = delete;
-
   ~TCPClient();
 
   void run();
@@ -42,20 +41,7 @@ public:
    * @brief Send a message to the server. The message will contain a header
    * and a payload packet of some sort.
    */
-  template <Sendable T> void sendData(Message<T> &message) {
-    serialize(message.header);
-    serialize(message.data);
-    ssize_t sendSize = sizeof(Message<T>);
-    std::cout << "Send size: " << sendSize << std::endl;
-    std::memcpy(m_buffer.data(), &message, sendSize);
-
-    // TODO: should make sure everything is sent
-    ssize_t nsent = send(m_sockfd, m_buffer.data(), sendSize, 0);
-    if (nsent != sendSize) {
-      std::cout << "Client send: We sent " << nsent << " bytes out of "
-                << sendSize << "\n";
-    }
-  }
+  template <Sendable T> void sendData(Message<T> &message);
 };
 
 #endif

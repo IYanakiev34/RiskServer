@@ -10,8 +10,8 @@
 #include <sys/types.h>
 #include <vector>
 
+#include "orders.h"
 static constexpr size_t BACK_LOG = 20;
-static constexpr size_t HEADER_SIZE = 16;
 
 /**
  * @brief A Server class that represents a set of client connections that are
