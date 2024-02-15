@@ -1,3 +1,5 @@
+#include <cstring>
+
 template <Sendable T> inline void serialize(T &) {}
 
 template <> void inline serialize<Header>(Header &type) {
@@ -97,4 +99,18 @@ template <> inline void deserialize<OrderResponse>(OrderResponse &response) {
 template <Sendable T> inline void deserialize(Message<T> &msg) {
   deserialize(msg.header);
   deserialize(msg.data);
+}
+
+template <Sendable T>
+std::ostream &operator<<(std::ostream &out, Message<T> const &msg) {
+  out << msg.header << std::endl << msg.data << std::endl;
+  return out;
+}
+
+template <Sendable T, size_t N>
+Message<T> create_msg_from_type(std::array<char, N> const &buf, size_t nbytes) {
+  Message<T> msg;
+  std::memset(&msg, 0, sizeof(Message<T>));
+  std::memcpy(&msg, buf.data(), nbytes);
+  return msg;
 }

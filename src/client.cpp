@@ -59,7 +59,7 @@ TCPClient::~TCPClient() {
 void TCPClient::run() {
   static long long seq = 1;
   std::cout << "If you wish to exit enter:  EXIT\n";
-  size_t msg_type = 0;
+  uint16_t msg_type = 0;
   Header header;
   Message<OrderResponse> rsp;
   while (true) {
@@ -75,7 +75,7 @@ void TCPClient::run() {
                            .count();
 
     // Build input
-    std::cout << "Enter Message Type:\n";
+    std::cout << "Message type: ";
     std::cin >> msg_type;
     switch (msg_type) {
     case NewOrder::MESSAGE_TYPE: {
@@ -84,9 +84,16 @@ void TCPClient::run() {
       header.payloadSize = sizeof(NewOrder);
       msg.header = std::move(header);
       msg.data.messageType = NewOrder::MESSAGE_TYPE;
-
       uint64_t listing_id, order_id, order_q, order_p;
-      std::cin >> listing_id >> order_id >> order_q >> order_p;
+      std::cout << "ProductId: ";
+      std::cin >> listing_id;
+      std::cout << "OrderId: ";
+      std::cin >> order_id;
+      std::cout << "OrderQty: ";
+      std::cin >> order_q;
+      std::cout << "OrderPrice: ";
+      std::cin >> order_p;
+
       msg.data.listingId = listing_id;
       msg.data.orderId = order_id;
       msg.data.orderQuantity = order_q;
@@ -101,6 +108,7 @@ void TCPClient::run() {
       msg.header = std::move(header);
       msg.data.messageType = DeleteOrder::MESSAGE_TYPE;
       uint64_t ord_id;
+      std::cout << "OrderId: ";
       std::cin >> ord_id;
       msg.data.orderId = ord_id;
       sendData(msg);
@@ -112,7 +120,10 @@ void TCPClient::run() {
       msg.header = std::move(header);
       msg.data.messageType = ModifyOrderQuantity::MESSAGE_TYPE;
       uint64_t order_id, new_quant;
-      std::cin >> order_id >> new_quant;
+      std::cout << "OrderId: ";
+      std::cin >> order_id;
+      std::cout << "NewQty: ";
+      std::cin >> new_quant;
       msg.data.orderId = order_id;
       msg.data.newQuantity = new_quant;
       sendData(msg);
@@ -124,7 +135,14 @@ void TCPClient::run() {
       msg.header = std::move(header);
       msg.data.messageType = Trade::MESSAGE_TYPE;
       uint64_t listing_id, trade_id, trade_q, trade_p;
-      std::cin >> listing_id >> trade_id >> trade_q >> trade_p;
+      std::cout << "ProductId: ";
+      std::cin >> listing_id;
+      std::cout << "TradeId: ";
+      std::cin >> trade_id;
+      std::cout << "TradeQty: ";
+      std::cin >> trade_q;
+      std::cout << "TradePrice: ";
+      std::cin >> trade_p;
       msg.data.listingId = listing_id;
       msg.data.tradeId = trade_id;
       msg.data.tradeQuantity = trade_q;
@@ -142,8 +160,7 @@ void TCPClient::run() {
       std::cerr << "Something went wrong on the server side\n";
     }
     deserialize(rsp);
-    std::cout << rsp.header << std::endl;
-    std::cout << rsp.data << std::endl;
+    std::cout << rsp;
   }
 }
 

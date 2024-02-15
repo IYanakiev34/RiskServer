@@ -1,4 +1,7 @@
 #include "include/server.h"
+#include "include/orders.h"
+#include <algorithm>
+#include <bits/chrono.h>
 #include <cstring>
 #include <iostream>
 #include <netdb.h>
@@ -7,9 +10,9 @@
 #include <util/util.h>
 
 Server::Server(std::string &&host, std::string &&port)
-    : m_requestBuffer(), m_clientName(), m_toDel(), m_currDelIdx(0),
-      m_clientAddr(), m_sinSize(0), m_fds(), m_host(host), m_port(port),
-      m_listenerfd(INVALID_FD) {
+    : m_orders(), m_products(), m_serverConfig(), m_requestBuffer(),
+      m_clientName(), m_toDel(), m_currDelIdx(0), m_clientAddr(), m_sinSize(0),
+      m_fds(), m_host(host), m_port(port), m_listenerfd(INVALID_FD) {
   m_fds.reserve(BACK_LOG);
 
   std::optional<int> listener_opt = get_listener_fd();
@@ -88,42 +91,39 @@ template <typename It> void Server::handle_client_request(It it) {
     return;
   }
 
+  Message<OrderResponse> rsp;
+
   // Create a message from the bytes received
   switch (nbytes) {
   case NEWO_MSG_SIZE: {
-    Message<NewOrder> msg;
-    std::memset(&msg, 0, sizeof(Message<NewOrder>));
-    std::memcpy(&msg, m_requestBuffer.data(), nbytes);
+    Message<NewOrder> msg =
+        create_msg_from_type<NewOrder>(m_requestBuffer, nbytes);
     deserialize(msg);
-    std::cout << msg.header << std::endl;
-    std::cout << msg.data << std::endl;
+    std::cout << msg;
+    rsp.data = handle_order(msg, client_fd);
     break;
   }
   case DELO_MSG_SIZE: {
-    Message<DeleteOrder> msg;
-    std::memset(&msg, 0, sizeof(Message<DeleteOrder>));
-    std::memcpy(&msg, m_requestBuffer.data(), nbytes);
+    Message<DeleteOrder> msg =
+        create_msg_from_type<DeleteOrder>(m_requestBuffer, nbytes);
     deserialize(msg);
-    std::cout << msg.header << std::endl;
-    std::cout << msg.data << std::endl;
+    std::cout << msg;
+    rsp.data = handle_order(msg, client_fd);
     break;
   }
   case MODO_MSG_SIZE: {
-    Message<ModifyOrderQuantity> msg;
-    std::memset(&msg, 0, sizeof(Message<ModifyOrderQuantity>));
-    std::memcpy(&msg, m_requestBuffer.data(), nbytes);
+    Message<ModifyOrderQuantity> msg =
+        create_msg_from_type<ModifyOrderQuantity>(m_requestBuffer, nbytes);
     deserialize(msg);
-    std::cout << msg.header << std::endl;
-    std::cout << msg.data << std::endl;
+    std::cout << msg;
+    rsp.data = handle_order(msg, client_fd);
     break;
   }
   case TRO_MSG_SIZE: {
-    Message<Trade> msg;
-    std::memset(&msg, 0, sizeof(Message<Trade>));
-    std::memcpy(&msg, m_requestBuffer.data(), nbytes);
+    Message<Trade> msg = create_msg_from_type<Trade>(m_requestBuffer, nbytes);
     deserialize(msg);
-    std::cout << msg.header << std::endl;
-    std::cout << msg.data << std::endl;
+    std::cout << msg;
+    rsp.data = handle_order(msg, client_fd);
     break;
   }
   default:
@@ -131,22 +131,140 @@ template <typename It> void Server::handle_client_request(It it) {
     exit(1);
   };
 
-  Message<OrderResponse> rsp{.header{.version = 1,
-                                     .payloadSize = sizeof(OrderResponse),
-                                     .sequenceNumber = 2,
-                                     .timestamp = 10},
-                             .data{.messageType = OrderResponse::MESSAGE_TYPE,
-                                   .orderId = 10,
-                                   .status = OrderResponse::Status::ACCEPTED}};
-
+  // Create header and send response
+  uint64_t time = std::chrono::duration_cast<std::chrono::seconds>(
+                      std::chrono::system_clock::now().time_since_epoch())
+                      .count();
+  Header responseHeader{.version = 1,
+                        .payloadSize = sizeof(OrderResponse),
+                        .sequenceNumber = 10,
+                        .timestamp = time};
+  rsp.header = std::move(responseHeader);
   serialize(rsp);
-  size_t toSend = ORDR_MSG_SIZE;
-  std::memcpy(m_requestBuffer.data(), &rsp, toSend);
 
-  int actuallySent = send(client_fd, &rsp, toSend, 0);
+  size_t toSend = ORDR_MSG_SIZE;
+  ssize_t actuallySent = send(client_fd, &rsp, toSend, 0);
   if (actuallySent == -1) {
     std::cerr << "Some err\n";
   }
+
+  // TODO: print system state
+}
+
+OrderResponse Server::handle_order(Message<NewOrder> const &msg, int clientFd) {
+  Order ord;
+  ord.m_traderFd = clientFd;
+  ord.m_id = msg.data.orderId;
+  ord.m_productId = msg.data.listingId;
+  ord.m_quantity = msg.data.orderQuantity;
+  ord.m_price = static_cast<double>(msg.data.orderPrice) / 10000.0;
+  ord.m_side = msg.data.side;
+
+  m_orders[clientFd][msg.data.orderId] = ord;
+
+  // update server state
+  ProductInfo prod = m_products[ord.m_productId];
+  if (ord.m_side == 'B') {
+    prod.BuyQty += ord.m_quantity;
+  } else {
+    prod.SellQty += ord.m_quantity;
+  }
+
+  prod.MBuy = std::max(prod.BuyQty, prod.NetPos + prod.BuyQty);
+  prod.MSell = std::max(prod.SellQty, prod.SellQty - prod.NetPos);
+
+  OrderResponse resp;
+  resp.orderId = ord.m_id;
+  resp.messageType = OrderResponse::MESSAGE_TYPE;
+
+  if (prod.MBuy <= m_serverConfig.buy && prod.MSell <= m_serverConfig.sell) {
+    resp.status = OrderResponse::Status::REJECTED;
+    m_products[ord.m_productId] = std::move(prod); // update the product
+    return resp;
+  }
+
+  resp.status = OrderResponse::Status::ACCEPTED;
+  return resp;
+}
+OrderResponse Server::handle_order(Message<DeleteOrder> const &msg,
+                                   int clientFd) {
+  OrderResponse resp;
+  resp.orderId = msg.data.orderId;
+  resp.messageType = OrderResponse::MESSAGE_TYPE;
+  std::optional<Order> order(find_order_by_id(clientFd, msg.data.orderId));
+  if (!order.has_value()) {
+    resp.status = OrderResponse::Status::REJECTED;
+    return resp;
+  }
+
+  Order &ord_v = order.value();
+  auto prod_it = m_products.find(ord_v.m_productId);
+  ProductInfo prod = prod_it->second;
+
+  if (ord_v.m_side == 'B') {
+    prod.BuyQty -= ord_v.m_quantity;
+  } else {
+    prod.SellQty -= ord_v.m_quantity;
+  }
+
+  prod.MBuy = std::max(prod.MBuy, prod.MBuy + prod.NetPos);
+  prod.MSell = std::max(prod.SellQty, prod.SellQty - prod.NetPos);
+  m_products[ord_v.m_productId] = std::move(prod); // update value
+
+  // erase the order
+  m_orders[clientFd].erase(order.value().m_id);
+  resp.status = OrderResponse::Status::ACCEPTED;
+  return resp;
+}
+OrderResponse Server::handle_order(Message<ModifyOrderQuantity> const &msg,
+                                   int clientFd) {
+
+  OrderResponse resp;
+  resp.messageType = OrderResponse::MESSAGE_TYPE;
+  resp.orderId = msg.data.orderId;
+  // Find the order and if it exists modify quantity
+  std::optional<Order> order(find_order_by_id(clientFd, msg.data.orderId));
+  if (!order.has_value()) {
+    resp.status = OrderResponse::Status::REJECTED;
+    return resp;
+  }
+
+  // Update state
+
+  // send response
+  resp.status = OrderResponse::Status::ACCEPTED;
+  return resp;
+}
+OrderResponse Server::handle_order(Message<Trade> const &msg, int clientFd) {
+  OrderResponse resp;
+  resp.messageType = OrderResponse::MESSAGE_TYPE;
+  resp.orderId = msg.data.tradeId;
+
+  std::optional<Order> order(find_order_by_id(clientFd, msg.data.tradeId));
+  if (!order.has_value()) {
+    resp.status = OrderResponse::Status::REJECTED;
+    return resp;
+  }
+
+  // Find the order and execute a trade
+
+  // send response
+  resp.status = OrderResponse::Status::ACCEPTED;
+  return resp;
+}
+
+std::optional<Order> Server::find_order_by_id(int clientFd, int orderId) {
+  auto pos = m_orders.find(clientFd);
+  if (pos == m_orders.end()) { // no orders for trader or wrong order
+    return std::nullopt;
+  }
+  auto &trader_orders = pos->second;
+  auto order_it = trader_orders.find(orderId);
+  if (order_it == trader_orders.end()) {
+    return std::nullopt;
+  }
+
+  return std::optional<Order>(order_it->second);
 }
 
 void Server::handle_new_connection() {

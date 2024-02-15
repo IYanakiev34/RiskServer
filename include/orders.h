@@ -1,5 +1,6 @@
 #ifndef ORDERS_INCLUDED_H
 #define ORDERS_INCLUDED_H
+#include <array>
 #include <cstdint>
 #include <endian.h>
 #include <netinet/in.h>
@@ -148,6 +149,12 @@ std::ostream &operator<<(std::ostream &out, DeleteOrder const &h);
 std::ostream &operator<<(std::ostream &out, ModifyOrderQuantity const &h);
 std::ostream &operator<<(std::ostream &out, Trade const &h);
 std::ostream &operator<<(std::ostream &out, OrderResponse const &h);
+
+template <Sendable T, size_t N>
+Message<T> create_msg_from_type(std::array<char, N> const &buf, size_t nbytes);
+
+template <Sendable T>
+std::ostream &operator<<(std::ostream &out, Message<T> const &msg);
 
 static constexpr size_t NEWO_MSG_SIZE = sizeof(Header) + sizeof(NewOrder);
 static constexpr size_t DELO_MSG_SIZE = sizeof(Header) + sizeof(DeleteOrder);
