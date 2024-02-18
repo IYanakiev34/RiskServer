@@ -74,17 +74,19 @@ void TCPClient::run() {
                            std::chrono::system_clock::now().time_since_epoch())
                            .count();
 
-    // Build input
+    // TODO: make factory for creating requests
     std::cout << "Message type: ";
     std::cin >> msg_type;
     switch (msg_type) {
     case NewOrder::MESSAGE_TYPE: {
+      std::cout << "Enter: (ProductId, OrderId, OrderQty, OrderPrice, Side)\n";
       Message<NewOrder> msg;
       std::memset(&msg, 0, NEWO_MSG_SIZE);
       header.payloadSize = sizeof(NewOrder);
       msg.header = std::move(header);
       msg.data.messageType = NewOrder::MESSAGE_TYPE;
       uint64_t listing_id, order_id, order_q, order_p;
+      char side;
       std::cout << "ProductId: ";
       std::cin >> listing_id;
       std::cout << "OrderId: ";
@@ -93,15 +95,19 @@ void TCPClient::run() {
       std::cin >> order_q;
       std::cout << "OrderPrice: ";
       std::cin >> order_p;
+      std::cout << "Side: ";
+      std::cin >> side;
 
       msg.data.listingId = listing_id;
       msg.data.orderId = order_id;
       msg.data.orderQuantity = order_q;
       msg.data.orderPrice = order_p;
+      msg.data.side = side;
       sendData(msg);
       break;
     }
     case DeleteOrder::MESSAGE_TYPE: {
+      std::cout << "Enter (OrderId)\n";
       Message<DeleteOrder> msg;
       std::memset(&msg, 0, DELO_MSG_SIZE);
       header.payloadSize = sizeof(DeleteOrder);
@@ -115,6 +121,7 @@ void TCPClient::run() {
       break;
     }
     case ModifyOrderQuantity::MESSAGE_TYPE: {
+      std::cout << "Enter: (OrderId, NewQty)\n";
       Message<ModifyOrderQuantity> msg;
       std::memset(&msg, 0, MODO_MSG_SIZE);
       msg.header = std::move(header);
@@ -130,6 +137,7 @@ void TCPClient::run() {
       break;
     }
     case Trade::MESSAGE_TYPE: {
+      std::cout << "Enter: (ProductId, TradeId, TradeQty, TradePrice)\n";
       Message<Trade> msg;
       std::memset(&msg, 0, TRO_MSG_SIZE);
       msg.header = std::move(header);

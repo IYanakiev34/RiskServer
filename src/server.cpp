@@ -1,5 +1,4 @@
 #include "include/server.h"
-#include "include/orders.h"
 #include <algorithm>
 #include <bits/chrono.h>
 #include <cstring>
@@ -94,6 +93,7 @@ template <typename It> void Server::handle_client_request(It it) {
   Message<OrderResponse> rsp;
 
   // Create a message from the bytes received
+
   switch (nbytes) {
   case NEWO_MSG_SIZE: {
     Message<NewOrder> msg =
@@ -148,7 +148,7 @@ template <typename It> void Server::handle_client_request(It it) {
     std::cerr << "Some err\n";
   }
 
-  // TODO: print system state
+  print_system_state();
 }
 
 OrderResponse Server::handle_order(Message<NewOrder> const &msg, int clientFd) {
@@ -160,10 +160,16 @@ OrderResponse Server::handle_order(Message<NewOrder> const &msg, int clientFd) {
   ord.m_price = static_cast<double>(msg.data.orderPrice) / 10000.0;
   ord.m_side = msg.data.side;
 
-  m_orders[clientFd][msg.data.orderId] = ord;
+  m_orders[clientFd].insert(std::make_pair(ord.m_id, ord));
 
   // update server state
-  ProductInfo prod = m_products[ord.m_productId];
+  auto prod_it = m_products.find(ord.m_productId);
+  if (prod_it == m_products.end()) { // insert default if it does not exist
+    prod_it =
+        m_products.insert(std::make_pair(ord.m_productId, ProductInfo())).first;
+  }
+
+  ProductInfo prod = prod_it->second;
   if (ord.m_side == 'B') {
     prod.BuyQty += ord.m_quantity;
   } else {
@@ -177,15 +183,17 @@ OrderResponse Server::handle_order(Message<NewOrder> const &msg, int clientFd) {
   resp.orderId = ord.m_id;
   resp.messageType = OrderResponse::MESSAGE_TYPE;
 
-  if (prod.MBuy <= m_serverConfig.buy && prod.MSell <= m_serverConfig.sell) {
+  // If we violate server do not add new order
+  if (prod.MBuy > m_serverConfig.buy && prod.MSell > m_serverConfig.sell) {
     resp.status = OrderResponse::Status::REJECTED;
-    m_products[ord.m_productId] = std::move(prod); // update the product
     return resp;
   }
 
+  m_products[ord.m_productId] = std::move(prod); // update the product
   resp.status = OrderResponse::Status::ACCEPTED;
   return resp;
 }
+
 OrderResponse Server::handle_order(Message<DeleteOrder> const &msg,
                                    int clientFd) {
   OrderResponse resp;
@@ -286,6 +294,13 @@ void Server::handle_new_connection() {
             m_clientName.data(), INET6_ADDRSTRLEN);
   std::cout << "Server got connection from: " << m_clientName.data()
             << std::endl;
+}
+
+void Server::print_system_state() {
+  for (auto const &[k, v] : m_products) {
+    std::cout << "\nProductId: " << k << std::endl;
+    std::cout << v << std::endl;
+  }
 }
 
 std::optional<int> Server::get_listener_fd() {

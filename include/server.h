@@ -21,6 +21,14 @@ struct Order {
   char m_side;
 };
 
+/**
+ * TODO: Should make proper abstract over a connection. The connection should
+ * handle the requests. The requests should be handled by a requestHandler
+ * object. Each requests can be encapsulated into a command. The server should
+ * only be concenred with the connections and perhaps shared resources by
+ * traders. Create proper abstractions for products info and orders.
+ */
+
 static constexpr size_t BACK_LOG = 20;
 
 /**
@@ -37,6 +45,13 @@ class Server final {
     uint64_t SellQty{0};
     uint64_t MBuy{0};
     uint64_t MSell{0};
+
+    friend std::ostream &operator<<(std::ostream &out, ProductInfo const &pr) {
+      out << "NetPos: " << pr.NetPos << ", BuyQty: " << pr.BuyQty
+          << ", SellQty: " << pr.SellQty << ", MaxBuy: " << pr.MBuy
+          << ", MSell: " << pr.MSell;
+      return out;
+    }
   };
 
   struct Thresholds {
@@ -108,12 +123,58 @@ private:
    */
   template <typename It> void handle_client_request(It it);
 
+  /**
+   * @brief Handle new order request from a client. It should insert the new
+   * order into the trader map of orders and update the system state if the
+   * order passes the requirements of the risk server
+   * @param msg - the new order message from the client
+   * @param clientFd - the connection between the client and the server (socket
+   * fd)
+   * @return OrderResponse - message to be sent back to the client
+   */
   OrderResponse handle_order(Message<NewOrder> const &msg, int clientFd);
+
+  /**
+   * @brief Handle delete order request from a client. It should delete an order
+   * if it exists for the specific trader. If not simply reject the order.
+   * @param msg - the delete order message from the client
+   * @param clientFd - the connection between the client and the server (socket
+   * fd)
+   * @return OrderResponse - message to be sent back to the client
+   */
   OrderResponse handle_order(Message<DeleteOrder> const &msg, int clientFd);
+
+  /**
+   * @brief Handle modify order quantity request from a client. It should modify
+   * an order for a specific trader if it exists and if it does not break any of
+   * the requirements of the risk server.
+   * @param msg - the modify quantity order message from the client
+   * @param clientFd - the connection between the client and the server (socket
+   * fd)
+   * @return OrderResponse - message to be sent back to the client
+   */
   OrderResponse handle_order(Message<ModifyOrderQuantity> const &msg,
                              int clientFd);
+
+  /**
+   * @brief Handle trade message from the client. It should execute the trade
+   * and update the status of the server.
+   * @param msg - the trade order message from the client
+   * @param clientFd - the connection between the client and the server (socket
+   * fd)
+   * @return OrderResponse - message to be sent back to the client
+   */
   OrderResponse handle_order(Message<Trade> const &msg, int clientFd);
 
+  /**
+   * @brief Finds an order by an id for a specific trader given the connection
+   * and the order of the trader.
+   * @param orderId - the id of the order that should be found.
+   * @param clientFd - the connection socket between the client and the server
+   * (traderId)
+   * @return optional<Order> - return an order if it exists and otherwise return
+   * nullopt.
+   */
   std::optional<Order> find_order_by_id(int clientFd, int orderId);
 
   /**
@@ -121,6 +182,8 @@ private:
    * in the set of fds.
    */
   void handle_new_connection();
+
+  void print_system_state();
 
   /**
    * @brief It will create a new socket try to bind it and then return it to the
