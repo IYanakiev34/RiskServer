@@ -1,9 +1,10 @@
 #ifndef SERVER_INCLUDED_H
 #define SERVER_INCLUDED_H
 
-#include "orders.h"
+#include "server_util.h"
 #include <arpa/inet.h>
 #include <array>
+#include <memory>
 #include <optional>
 #include <poll.h>
 #include <string>
@@ -12,61 +13,23 @@
 #include <unordered_map>
 #include <vector>
 
-// TODO: move structs to proper files and implement some methods
-// also move more things to the TCPclient
-struct ProductInfo {
-  uint64_t NetPos{0};
-  uint64_t BuyQty{0};
-  uint64_t SellQty{0};
-  uint64_t MBuy{0};
-  uint64_t MSell{0};
-
-  friend std::ostream &operator<<(std::ostream &out, ProductInfo const &pr) {
-    out << "NetPos: " << pr.NetPos << ", BuyQty: " << pr.BuyQty
-        << ", SellQty: " << pr.SellQty << ", MaxBuy: " << pr.MBuy
-        << ", MSell: " << pr.MSell;
-    return out;
-  }
-};
-
-struct Order {
-  int m_traderFd;
-  uint64_t m_id;
-  uint64_t m_productId;
-  uint64_t m_quantity;
-  double m_price;
-  char m_side;
-};
-
-struct ServerConfig {
-  uint64_t BuyLimit;
-  uint64_t SellLimit;
-};
-
-struct ServerInfo {
-  int ListenerFd;
-  uint64_t BuyLimit;
-  uint64_t SellLimit;
-  std::string Host;
-  std::string Port;
-};
-
-struct ServerResources {
-  std::vector<pollfd> Fds;
-  // TODO: vector of connections;
-  std::array<char, 256> RequestBuffer;
-  std::unordered_map<uint64_t, ProductInfo> ProductMap;
-};
+class Connection;
 
 /**
- * TODO: Should make proper abstract over a connection. The connection should
- * handle the requests. The requests should be handled by a requestHandler
- * object. Each requests can be encapsulated into a command. The server should
- * only be concenred with the connections and perhaps shared resources by
- * traders. Create proper abstractions for products info and orders.
+ * @brief Holds the main server resources. These resources should be shared by
+ * connections. Connections should perform operation on the product map when the
+ * recieve a valid order.
  */
-
-static constexpr size_t BACK_LOG = 20;
+struct ServerResources {
+  ServerResources()
+      : ListenerFd(INVALID_FD), Fds(), Connections(), ProductMap() {}
+  int ListenerFd{INVALID_FD};
+  std::vector<pollfd> Fds; /// Vector of the active file descriptors
+  std::unordered_map<int, std::shared_ptr<Connection>>
+      Connections; /// Map of the connections
+  std::unordered_map<uint64_t, ProductInfo>
+      ProductMap; // Map of the products and their total positions
+};
 
 /**
  * @brief A Server class that represents a set of client connections that are
@@ -74,37 +37,14 @@ static constexpr size_t BACK_LOG = 20;
  * respond to them on the proper clients.
  */
 class Server final {
-  static constexpr int INVALID_FD = -1000;
-
-  struct Thresholds {
-    uint64_t buy;
-    uint64_t sell;
-  };
-
-  // Convinience types for internal use
-  using VecFds = std::vector<pollfd>;
   using NameBuf = std::array<char, INET6_ADDRSTRLEN>;
-  enum { max_size = 2048 };
-  using ReqBuf = std::array<char, max_size>;
-  using TraderMap =
-      std::unordered_map<int, std::unordered_map<uint64_t, Order>>;
-  using ProductMap = std::unordered_map<uint64_t, ProductInfo>;
 
-  TraderMap m_orders;        // traders orders
-  ProductMap m_products;     // hyp pos for products
-  Thresholds m_serverConfig; // config
-  ReqBuf m_requestBuffer;    // Holds the client request and the serve response
-  NameBuf m_clientName;      // stores the hostname of the client
-  std::array<int, 256> m_toDel; // connections to delete;
-  int m_currDelIdx;             // the current index in the m_toDel arr
+  NameBuf m_clientName; // stores the hostname of the client
+  ServerResources m_resources;
+  ServerInfo m_info;
   struct sockaddr_storage
       m_clientAddr;    // stores the sockaddr_in or sockaddr_in6 of the client
   socklen_t m_sinSize; // stores the size of the sockaddr struct
-
-  VecFds m_fds;       // vector that stores the connections to the server
-  std::string m_host; // the name of the host
-  std::string m_port; // the port of the host
-  int m_listenerfd;   // the listenerfd used for accepting client connections
 
 public:
   /**
@@ -115,7 +55,7 @@ public:
    * @param host - the name of the host
    * @param port - the port number
    */
-  Server(std::string &&host, std::string &&port);
+  Server(std::string host, std::string port, ServerConfig config);
 
   // cannot copy construct of assign a server
   Server(Server const &) = delete;
@@ -139,77 +79,49 @@ public:
    */
   void run();
 
+  /**
+   * @brief Deregister a connection from the server. The connection should be
+   * removed from the map of connections and we should also remove the pollfd
+   * associated with the connection.
+   */
+  void deregister_connection(std::shared_ptr<Connection> conn);
+
+  /// Reutrn a reference to the server products should be used only by
+  /// connections
+  [[nodiscard]] inline std::unordered_map<uint64_t, ProductInfo> &
+  get_products() noexcept {
+    return m_resources.ProductMap;
+  }
+
+  /// Return a reference to the server information should be used only by
+  /// connections
+  [[nodiscard]] inline ServerInfo &get_info() noexcept { return m_info; }
+
+  /**
+   * @brief Print the state of the risk server. This involves printing how many
+   * assets we have and what are the current limits and positions for them.
+   */
+  void print_system_state();
+
 private:
   /**
-   * @brief Handle client requests and messages on a specific client socket.
+   * @brief Accept an incoming connection and return the new file descriptor.
+   * If an error occurs print it and return invalid FD.
+   * @return new fd for the connection or INVALID_FD
    */
-  template <typename It> void handle_client_request(It it);
+  int accept_connection();
 
   /**
-   * @brief Handle new order request from a client. It should insert the new
-   * order into the trader map of orders and update the system state if the
-   * order passes the requirements of the risk server
-   * @param msg - the new order message from the client
-   * @param clientFd - the connection between the client and the server (socket
-   * fd)
-   * @return OrderResponse - message to be sent back to the client
+   * @brief Print information about the incoming client that has connected to
+   * the server.
    */
-  OrderResponse handle_order(Message<NewOrder> const &msg, int clientFd);
-
-  /**
-   * @brief Handle delete order request from a client. It should delete an order
-   * if it exists for the specific trader. If not simply reject the order.
-   * @param msg - the delete order message from the client
-   * @param clientFd - the connection between the client and the server (socket
-   * fd)
-   * @return OrderResponse - message to be sent back to the client
-   */
-  OrderResponse handle_order(Message<DeleteOrder> const &msg, int clientFd);
-
-  /**
-   * @brief Handle modify order quantity request from a client. It should modify
-   * an order for a specific trader if it exists and if it does not break any of
-   * the requirements of the risk server.
-   * @param msg - the modify quantity order message from the client
-   * @param clientFd - the connection between the client and the server (socket
-   * fd)
-   * @return OrderResponse - message to be sent back to the client
-   */
-  OrderResponse handle_order(Message<ModifyOrderQuantity> const &msg,
-                             int clientFd);
-
-  /**
-   * @brief Handle trade message from the client. It should execute the trade
-   * and update the status of the server.
-   * @param msg - the trade order message from the client
-   * @param clientFd - the connection between the client and the server (socket
-   * fd)
-   * @return OrderResponse - message to be sent back to the client
-   */
-  OrderResponse handle_order(Message<Trade> const &msg, int clientFd);
-
-  /**
-   * @brief Finds an order by an id for a specific trader given the connection
-   * and the order of the trader.
-   * @param orderId - the id of the order that should be found.
-   * @param clientFd - the connection socket between the client and the server
-   * (traderId)
-   * @return optional<Order> - return an order if it exists and otherwise return
-   * nullopt.
-   */
-  std::optional<Order> find_order_by_id(int clientFd, int orderId);
+  void print_new_connection();
 
   /**
    * @brief Handle new incoming connection. The new connection will be included
    * in the set of fds.
    */
   void handle_new_connection();
-
-  // TODO: implement
-  void register_connection();
-  void deregister_connection();
-
-  void print_system_state();
 
   /**
    * @brief It will create a new socket try to bind it and then return it to the
